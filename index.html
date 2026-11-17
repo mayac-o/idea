@@ -133,6 +133,7 @@ nav button.on{color:var(--green-d);background:var(--green-soft)}
 .row.done{opacity:.78;box-shadow:none;border:1px dashed var(--line);background:transparent}.row.done .thumb{filter:saturate(.6)}.row.done .secondary{padding:8px 12px;font-size:14px}
 .chk{display:flex;align-items:center;gap:12px;margin:0;padding:11px 0;border-bottom:1px solid var(--line);font-size:15px;color:var(--text);font-weight:500}.chk input{width:22px;height:22px;flex:none;margin:0;accent-color:var(--green)}.chk small{display:block;color:var(--muted);font-size:13px;font-weight:400}.rev{max-height:52vh;overflow:auto;margin:8px 0}
 #upd{position:fixed;top:calc(8px + env(safe-area-inset-top));inset-inline:16px;max-width:488px;margin:0 auto;z-index:25;background:var(--green);color:var(--on-green);border-radius:16px;padding:10px 12px 10px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 12px 28px -10px rgba(0,0,0,.4);font-weight:600}#upd[hidden]{display:none}#upd button{background:var(--card);color:var(--green-d);border-radius:12px;padding:8px 14px;font-weight:700}
+.tag{display:inline-block;margin-inline-start:7px;padding:1px 7px;border-radius:8px;background:var(--green-soft);color:var(--green-d);font-size:11px;font-weight:600;vertical-align:2px}
 .enter>*{animation:rise .42s var(--ease) both}
 .enter>*:nth-child(2){animation-delay:.04s}.enter>*:nth-child(3){animation-delay:.08s}.enter>*:nth-child(4){animation-delay:.12s}.enter>*:nth-child(n+5){animation-delay:.16s}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
@@ -319,8 +320,8 @@ function when(due) {
 }
 
 /* ---------- storage ---------- */
-const VERSION = '2026-11-13.a';
-const BUILD = '13/11/2026 17:38'; // update on every deploy
+const VERSION = '2026-11-17.a';
+const BUILD = '17/11/2026 10:52'; // update on every deploy
 const KEY = 'plants_v1';
 let DB = { v: 1, plants: [], log: [] };
 try { const raw = localStorage.getItem(KEY); if (raw) DB = JSON.parse(raw); } catch (e) {}
@@ -334,6 +335,16 @@ try { navigator.storage?.persist?.(); } catch (e) {}
 function normalizeDB() { DB.rooms = DB.rooms || {}; DB.meta = DB.meta || {}; if (!DB.meta.firstUse) DB.meta.firstUse = today(); }
 normalizeDB();
 const UI = (() => { try { return JSON.parse(localStorage.getItem('plants_ui')) || {}; } catch (e) { return {}; } })();
+const PLACES = { home: 'Home', office: 'Office' };
+const placeOf = p => (p.place === 'office' ? 'office' : 'home');
+const placeOK = p => !UI.place || UI.place === 'all' || placeOf(p) === UI.place;
+const roomKey = p => placeOf(p) === 'office' ? `Office · ${p.location || 'Office'}` : (p.location || 'No room');
+// shown only once there is at least one office plant, so the app stays simple for home-only users
+function placeBar() {
+  if (!DB.plants.some(p => placeOf(p) === 'office')) { if (UI.place && UI.place !== 'all') { UI.place = 'all'; saveUI(); } return ''; }
+  const cur = UI.place || 'all';
+  return `<div class="chips" style="margin-top:0">${[['all', 'All'], ...Object.entries(PLACES)].map(([k, v]) => `<button class="chip ${cur === k ? 'on' : ''}" data-act="place" data-v="${k}">${v}</button>`).join('')}</div>`;
+}
 const saveUI = () => { try { localStorage.setItem('plants_ui', JSON.stringify(UI)); } catch (e) {} };
 { // migrate Hebrew names from the earlier Hebrew build
   const LOC = { 'סלון': 'Living Room', 'מטבח': 'Kitchen', 'חדר שינה': 'Bedroom', 'מרפסת': 'Balcony', 'חדר עבודה': 'Office', 'אמבטיה': 'Bathroom', 'שירותים': 'Bathroom', 'מחסן': 'Storage' };
@@ -343,7 +354,7 @@ const saveUI = () => { try { localStorage.setItem('plants_ui', JSON.stringify(UI
 /* ---------- state / render ---------- */
 let view = { name: 'today' };
 let lpTimer = null, lpFired = false, lpSheetAt = 0, lpPos = null;
-let todayTab = 'today', sheetCtx = null, formPhoto = null, lastUndo = null, toastTimer = null, locFilter = '';
+let todayTab = 'today', sheetCtx = null, formPhoto = null, lastUndo = null, toastTimer = null, locFilter = '', formPlace = 'home';
 
 let enter = false;
 function go(v) { view = v; enter = true; render(); scrollTo(0, 0); }
@@ -359,15 +370,15 @@ const thumb = (p, cls = 'thumb') => p.photo ? `<img class="${cls}" src="${p.phot
 
 function vToday() {
   const items = [];
-  DB.plants.forEach(p => Object.keys(p.tasks).forEach(k => { const i = info(p, k); if (i.due) items.push({ p, k, i, w: when(i.due) }); }));
+  DB.plants.filter(placeOK).forEach(p => Object.keys(p.tasks).forEach(k => { const i = info(p, k); if (i.due) items.push({ p, k, i, w: when(i.due) }); }));
   items.sort((a, b) => a.i.due.localeCompare(b.i.due));
   const late = items.filter(x => x.w.d < 0), now = items.filter(x => x.w.d === 0), soon = items.filter(x => x.w.d > 0 && x.w.d <= 30);
   const row = (x, snz = true) => `<div class="row ${x.w.late ? 'late' : ''}">
     <button class="info-btn" data-act="open" data-p="${x.p.id}" style="display:contents">${thumb(x.p)}
-      <div class="info"><b><bdi>${esc(x.p.name)}</bdi></b><span class="sub">${TASKS[x.k].i} ${TASKS[x.k].l}</span><span class="sub ${x.w.late ? 'late' : ''}" style="display:block">${x.w.txt}</span></div></button>
+      <div class="info"><b><bdi>${esc(x.p.name)}</bdi>${placeOf(x.p) === 'office' && (UI.place || 'all') === 'all' ? '<span class="tag">Office</span>' : ''}</b><span class="sub">${TASKS[x.k].i} ${TASKS[x.k].l}</span><span class="sub ${x.w.late ? 'late' : ''}" style="display:block">${x.w.txt}</span></div></button>
     ${snz ? `<button class="snz" data-act="snooze" data-p="${x.p.id}" data-k="${x.k}" aria-label="Snooze">${svg('clock')}</button>` : ''}
     <button class="ok" data-act="done" data-p="${x.p.id}" data-k="${x.k}" aria-label="Done">${svg('check')}</button></div>`;
-  let h = `<h1>Today</h1><div class="sub" style="margin:-10px 0 8px">${SEASONS[season()]} · ${shortDate(today())}</div>`;
+  let h = `<h1>Today</h1><div class="sub" style="margin:-10px 0 12px">${SEASONS[season()]} · ${shortDate(today())}</div>${placeBar()}`;
   if (!DB.plants.length) return h + `<div class="empty"><div class="art">${svg('plant')}</div><p><b>No plants yet</b><br>Add your first plant to start tracking its watering and care.</p><button class="secondary" data-act="new">Add a plant</button><br><br><button class="secondary" data-act="seed">Import my plants (${MINE.length})</button></div>`;
   const byTask = {}; now.forEach(x => byTask[x.k] = (byTask[x.k] || 0) + 1);
   const todayTxt = now.length ? Object.entries(byTask).map(([k, n]) => `${TASKS[k].l} ×${n}`).join(', ') : 'Nothing';
@@ -380,7 +391,7 @@ function vToday() {
     const due = [...late, ...now];
     if (!due.length) h += `<div class="empty"><div class="art">${svg('done')}</div><p><b>All caught up</b><br>Nothing needs care today.</p></div>`;
     else if (UI.group) {
-      const rooms = {}; due.forEach(x => (rooms[x.p.location || 'No room'] = rooms[x.p.location || 'No room'] || []).push(x));
+      const rooms = {}; due.forEach(x => (rooms[roomKey(x.p)] = rooms[roomKey(x.p)] || []).push(x));
       h += Object.entries(rooms).map(([r, g]) => `<div class="roomhead"><b><bdi>${esc(r)}</bdi></b><span class="sub">${g.length}</span><button class="secondary" data-act="doneroom" data-room="${esc(r)}">${svg('check')} All done</button></div>${g.map(x => row(x)).join('')}`).join('');
     } else h += due.map(x => row(x)).join('');
     if (due.length && !UI.hintDone) h += `<p class="sub hint">Tip: press and hold ${svg('check')} to log care from an earlier day.</p>`;
@@ -395,17 +406,17 @@ function vToday() {
 }
 
 function vPlants() {
-  const locs = [...new Set(DB.plants.map(p => p.location).filter(Boolean))];
+  const pool = DB.plants.filter(placeOK), locs = [...new Set(pool.map(p => p.location).filter(Boolean))];
   if (locFilter && !locs.includes(locFilter)) locFilter = '';
-  const list = DB.plants.filter(p => !locFilter || p.location === locFilter);
-  let h = `<h1>Plants</h1>`;
+  const list = pool.filter(p => !locFilter || p.location === locFilter);
+  let h = `<h1>Plants</h1>${placeBar()}`;
   if (DB.plants.length > 6) h += `<input id="q" class="search" type="search" placeholder="Search plants" aria-label="Search plants">`;
   if (locs.length > 1) h += `<div class="chips"><button class="chip ${locFilter ? '' : 'on'}" data-act="loc" data-v="">All</button>${locs.map(l => `<button class="chip ${locFilter === l ? 'on' : ''}" data-act="loc" data-v="${esc(l)}">${esc(l)}</button>`).join('')}</div>`;
   if (!list.length) h += `<div class="empty"><div class="art">${svg('plant')}</div><p><b>No plants yet</b><br>Tap + to add your first plant.</p></div>`;
   h += `<div class="grid">` + list.map(p => {
     const dues = Object.keys(p.tasks).map(k => info(p, k).due).filter(Boolean).sort();
     const w = dues[0] ? when(dues[0]) : null;
-    return `<button class="pcard" data-s="${esc((p.name + ' ' + SPECIES[p.species].n + ' ' + (p.location || '')).toLowerCase())}" data-act="open" data-p="${p.id}">${thumb(p, 'pic')}<div class="meta"><b><bdi>${esc(p.name)}</bdi></b><span class="sub ${w?.late ? 'late' : ''}">${esc(p.location || SPECIES[p.species].n)}${w ? ' · ' + w.txt : ''}</span></div></button>`;
+    return `<button class="pcard" data-s="${esc((p.name + ' ' + SPECIES[p.species].n + ' ' + (p.location || '')).toLowerCase())}" data-act="open" data-p="${p.id}">${thumb(p, 'pic')}<div class="meta"><b><bdi>${esc(p.name)}</bdi></b><span class="sub ${w?.late ? 'late' : ''}">${placeOf(p) === 'office' && (UI.place || 'all') === 'all' ? 'Office · ' : ''}${esc(p.location || SPECIES[p.species].n)}${w ? ' · ' + w.txt : ''}</span></div></button>`;
   }).join('') + `</div><button class="fab" data-act="new" aria-label="Add a plant">+</button>`;
   return h;
 }
@@ -425,7 +436,7 @@ function vPlant() {
   const sp = SPECIES[p.species] || SPECIES.other;
   let h = `<div class="topbar"><button class="icon-btn" data-act="back" aria-label="Back">${svg('back')}</button><h1><bdi>${esc(p.name)}</bdi></h1><button class="icon-btn" data-act="edit" data-p="${p.id}" aria-label="Edit">${svg('pencil')}</button></div>`;
   h += p.photo ? `<img class="hero" src="${p.photo}" alt="">` : `<div class="hero">${sp.e}</div>`;
-  h += `<div class="sub">${esc(sp.n)}${p.location ? ' · ' + esc(p.location) : ''}</div>
+  h += `<div class="sub">${esc(sp.n)}${placeOf(p) === 'office' ? ' · Office' : ''}${p.location ? ' · ' + esc(p.location) : ''}</div>
     <div class="sub">${(o => `${nm(POT, o.pot)} pot · ${LIGHT[o.light][0]} · ${nm(MAT, o.mat)} pot · ${nm(SOIL, o.soil)} · ${o.drain ? 'Drainage holes' : 'No drainage holes'}`)(optsOf(p))}</div>`;
   Object.keys(p.tasks).forEach(k => {
     const i = info(p, k), T = TASKS[k], w = i.due ? when(i.due) : null;
@@ -456,6 +467,8 @@ function vForm() {
   <label class="photo-pick" for="photo" id="photolbl">${formPhoto ? `<img src="${formPhoto}" alt="">` : svg('camera') + ' Add photo'}</label>
   <input type="file" id="photo" accept="image/*" hidden>
   <label>Name<input id="f-name" value="${esc(p?.name || '')}" placeholder="e.g. Living room pothos"></label>
+  <div style="margin:14px 0 6px;font-size:13px;font-weight:500;color:var(--muted)">Where</div>
+  <div class="seg" style="margin:0 0 4px">${Object.entries(PLACES).map(([k, v]) => `<button type="button" class="${formPlace === k ? 'on' : ''}" data-act="formplace" data-v="${k}">${v}</button>`).join('')}</div>
   <label>Plant type<select id="f-species">${Object.entries(SPECIES).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v.e} ${v.n}</option>`).join('')}</select></label>
   <label>Location<input id="f-loc" list="locs" value="${esc(p?.location || '')}" placeholder="Living Room, Kitchen..."><datalist id="locs">${locs.map(l => `<option value="${esc(l)}">`).join('')}</datalist></label>
   <div class="card" style="margin-top:12px"><b>Pot &amp; growing conditions</b><div class="sub">All of these adjust the recommended watering frequency</div>
@@ -625,7 +638,7 @@ function doneSection() {
   const seen = new Set(), rows = [];
   for (let i = DB.log.length - 1; i >= 0; i--) {
     const e = DB.log[i]; if (e.type !== 'done' || fmt(new Date(e.t)) !== today()) continue;
-    const key = e.pid + e.task, p = plant(e.pid); if (seen.has(key) || !p || !p.tasks[e.task] || !TASKS[e.task]) continue; seen.add(key);
+    const key = e.pid + e.task, p = plant(e.pid); if (seen.has(key) || !p || !placeOK(p) || !p.tasks[e.task] || !TASKS[e.task]) continue; seen.add(key);
     rows.push(`<div class="row done"><button class="info-btn" data-act="open" data-p="${p.id}" style="display:contents">${thumb(p)}
       <div class="info"><b><bdi>${esc(p.name)}</bdi></b><span class="sub">${svg('check')} ${TASKS[e.task].d}${e.date !== today() ? ' on ' + shortDate(e.date) : ' today'}</span></div></button>
       ${e.prevLast ? `<button class="secondary" data-act="undorow" data-i="${i}">Undo</button>` : ''}</div>`);
@@ -645,7 +658,7 @@ function icsText() {
     const d = i.due < today() ? today() : i.due; if (diff(today(), d) > 60) return;
     const ds = d.replace(/-/g, ''), de = addDays(d, 1).replace(/-/g, '');
     L.push('BEGIN:VEVENT', `UID:${p.id}-${k}-${ds}@myplants`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${de}`,
-      `SUMMARY:${TASKS[k].l}: ${p.name.replace(/[\\,;]/g, ' ')}`, `DESCRIPTION:${(p.location || '').replace(/[\\,;]/g, ' ')}`, 'END:VEVENT');
+      `SUMMARY:${TASKS[k].l}: ${p.name.replace(/[\\,;]/g, ' ')}`, `DESCRIPTION:${((placeOf(p) === 'office' ? 'Office ' : '') + (p.location || '')).replace(/[\\,;]/g, ' ')}`, 'END:VEVENT');
   }));
   L.push('END:VCALENDAR'); return L.join('\r\n');
 }
@@ -713,8 +726,10 @@ document.addEventListener('click', async e => {
   else if (a === 'tab2') { todayTab = d.v; render(); }
   else if (a === 'open') go({ name: 'plant', id: d.p, from: view.name });
   else if (a === 'back') go(view.name === 'form' && view.id !== 'new' ? { name: 'plant', id: view.id } : { name: view.from || 'plants' });
-  else if (a === 'new') { formPhoto = null; go({ name: 'form', id: 'new', from: view.name }); }
-  else if (a === 'edit') { formPhoto = plant(d.p).photo || null; go({ name: 'form', id: d.p }); }
+  else if (a === 'place') { UI.place = d.v; saveUI(); locFilter = ''; render(); }
+  else if (a === 'formplace') { formPlace = d.v; document.querySelectorAll('[data-act=formplace]').forEach(b => b.classList.toggle('on', b.dataset.v === formPlace)); }
+  else if (a === 'new') { formPlace = UI.place === 'office' ? 'office' : 'home'; formPhoto = null; go({ name: 'form', id: 'new', from: view.name }); }
+  else if (a === 'edit') { formPlace = placeOf(plant(d.p)); formPhoto = plant(d.p).photo || null; go({ name: 'form', id: d.p }); }
   else if (a === 'loc') { locFilter = d.v; render(); }
   else if (a === 'done') doDone(d.p, d.k);
   else if (a === 'snooze') {
@@ -772,13 +787,13 @@ document.addEventListener('click', async e => {
     const species = $('#f-species').value, location = $('#f-loc').value.trim();
     if (view.id === 'new') {
       const last = $('#f-last').value || today(), nowd = today();
-      const p = { id: uid(), name, species, location, photo: formPhoto, notes: '', created: nowd, opts: readOpts(),
+      const p = { id: uid(), name, species, location, place: formPlace, photo: formPhoto, notes: '', created: nowd, opts: readOpts(),
         tasks: { water: { last, manual: null, snoozeUntil: null, snoozes: 0 }, fertilize: { last: nowd, manual: null, snoozeUntil: null, snoozes: 0 } } };
       DB.plants.push(p); addLog({ type: 'add', pid: p.id, plant: name, species, date: nowd });
       save(); go({ name: 'plant', id: p.id, from: 'plants' });
     } else {
       const pl = plant(view.id), before = optsOf(pl), after = readOpts();
-      Object.assign(pl, { name, species, location, photo: formPhoto, opts: after });
+      Object.assign(pl, { name, species, location, place: formPlace, photo: formPhoto, opts: after });
       if (JSON.stringify(before) !== JSON.stringify(after)) addLog({ type: 'opts', pid: pl.id, plant: name, species, date: today(), from: before, to: after });
       save(); go({ name: 'plant', id: view.id, from: 'plants' });
     }
@@ -791,7 +806,7 @@ document.addEventListener('click', async e => {
   }
   else if (a === 'exportlog') {
     shareJSON(`plants-log-${today()}.json`, { exportedAt: new Date().toISOString(), season: season(), house: houseMult(), rooms: DB.rooms || {},
-      plants: DB.plants.map(p => ({ id: p.id, name: p.name, species: p.species, location: p.location, created: p.created, location_climate: (DB.rooms || {})[p.location] || null, opts: optsOf(p), last: Object.fromEntries(Object.entries(p.tasks).map(([k, t]) => [k, t.last])),
+      plants: DB.plants.map(p => ({ id: p.id, name: p.name, species: p.species, location: p.location, created: p.created, place: placeOf(p), location_climate: (DB.rooms || {})[p.location] || null, opts: optsOf(p), last: Object.fromEntries(Object.entries(p.tasks).map(([k, t]) => [k, t.last])),
         tasks: Object.fromEntries(Object.entries(p.tasks).map(([k, t]) => [k, { manual: t.manual, recommended: recInterval(p, k) }])) })), log: DB.log });
   }
   else if (a === 'seed') {
@@ -838,7 +853,7 @@ document.addEventListener('click', async e => {
   else if (a === 'exportics') shareFile(`plants-care-${today()}.ics`, icsText(), 'text/calendar');
   else if (a === 'togroup') { UI.group = !UI.group; saveUI(); render(); }
   else if (a === 'doneroom') {
-    const list = []; DB.plants.forEach(p => { if ((p.location || 'No room') === d.room) Object.keys(p.tasks).forEach(k => { const i = info(p, k); if (i.due && i.due <= today()) list.push([p.id, k]); }); });
+    const list = []; DB.plants.forEach(p => { if (roomKey(p) === d.room && placeOK(p)) Object.keys(p.tasks).forEach(k => { const i = info(p, k); if (i.due && i.due <= today()) list.push([p.id, k]); }); });
     if (list.length) doDoneMany(list);
   }
   else if (a === 'usesug' || a === 'nosug') {
