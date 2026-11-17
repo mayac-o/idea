@@ -308,8 +308,9 @@ function info(p, k) {
   if (!interval) return { interval: 0, rec, base: null, due: null, manual: !!t.manual };
   let base = addDays(t.last, interval);
   if (k === 'fertilize') base = fertAdjust(t.last, base);
-  const due = t.snoozeUntil && t.snoozeUntil > base ? t.snoozeUntil : base;
-  return { interval, rec, base, due, manual: !!t.manual };
+  const dueRaw = t.snoozeUntil && t.snoozeUntil > base ? t.snoozeUntil : base;
+  const due = placeOf(p) === 'office' ? rollOffice(dueRaw) : dueRaw; // reminder only: Fri/Sat -> Sunday for the office
+  return { interval, rec, base, due, dueRaw, manual: !!t.manual };
 }
 function when(due) {
   const d = diff(today(), due);
@@ -320,8 +321,8 @@ function when(due) {
 }
 
 /* ---------- storage ---------- */
-const VERSION = '2026-11-17.b';
-const BUILD = '17/11/2026 11:01'; // update on every deploy
+const VERSION = '2026-11-17.c';
+const BUILD = '17/11/2026 11:03'; // update on every deploy
 const KEY = 'plants_v1';
 let DB = { v: 1, plants: [], log: [] };
 try { const raw = localStorage.getItem(KEY); if (raw) DB = JSON.parse(raw); } catch (e) {}
@@ -445,7 +446,7 @@ function vPlant() {
       <div class="sub" style="margin-top:6px">${i.interval ? (i.manual ? 'Custom schedule' : `Recommended for ${SEASONS[season()].toLowerCase()}`) : (k === 'fertilize' && season() === 'winter' ? 'No fertilizing in winter (resumes in spring)' : `No recommendation for ${SEASONS[season()].toLowerCase()}`)}
         · Last done ${shortDate(p.tasks[k].last)}</div>
       ${k === 'water' && !i.manual && factors(p).length ? `<div class="sub" style="margin-top:2px">Base ${baseRec(p, k)} days${factors(p).map(([l, m]) => ` · ${l} ×${m}`).join('')} → ${i.rec}</div>` : ''}
-      ${w ? `<div class="sub ${w.late ? 'late' : ''}" style="margin-top:2px">Next: ${w.txt} (${shortDate(i.due)})</div>` : ''}
+      ${w ? `<div class="sub ${w.late ? 'late' : ''}" style="margin-top:2px">Next: ${w.txt} (${shortDate(i.due)})${i.dueRaw !== i.due ? ` · office closed on ${parse(i.dueRaw).toLocaleDateString('en-GB', { weekday: 'long' })}` : ''}</div>` : ''}
       ${sugHtml(p, k)}
       <div class="task-btns"><button class="secondary" data-act="snooze" data-p="${p.id}" data-k="${k}">${svg('clock')} Snooze</button><button class="primary" style="margin:0;padding:9px" data-act="done" data-p="${p.id}" data-k="${k}">${svg('check')} ${T.d}</button></div></div>`;
   });
@@ -524,7 +525,7 @@ function toast(msg, undo) {
 function applyDone(pid, k, on = today()) { // `on` = the day the care actually happened
   const p = plant(pid), t = p.tasks[k], i = info(p, k), prev = { ...t };
   addLog({ type: 'done', pid, plant: p.name, species: p.species, task: k, date: on, planned: i.base, due: i.due,
-    daysLate: i.base ? diff(i.base, on) : null, interval: i.interval, manual: i.manual, snoozes: t.snoozes || 0, prevLast: prev.last, prevSnoozeUntil: prev.snoozeUntil || null, prevSnoozes: prev.snoozes || 0, ...(on !== today() ? { loggedOn: today() } : {}) });
+    daysLate: i.base ? diff(placeOf(p) === 'office' ? rollOffice(i.base) : i.base, on) : null, interval: i.interval, manual: i.manual, snoozes: t.snoozes || 0, prevLast: prev.last, prevSnoozeUntil: prev.snoozeUntil || null, prevSnoozes: prev.snoozes || 0, ...(on !== today() ? { loggedOn: today() } : {}) });
   t.last = on; t.snoozeUntil = null; t.snoozes = 0; t.dismissed = null;
   return { pid, k, prev };
 }
