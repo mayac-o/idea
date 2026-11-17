@@ -320,8 +320,8 @@ function when(due) {
 }
 
 /* ---------- storage ---------- */
-const VERSION = '2026-11-17.a';
-const BUILD = '17/11/2026 10:52'; // update on every deploy
+const VERSION = '2026-11-17.b';
+const BUILD = '17/11/2026 11:01'; // update on every deploy
 const KEY = 'plants_v1';
 let DB = { v: 1, plants: [], log: [] };
 try { const raw = localStorage.getItem(KEY); if (raw) DB = JSON.parse(raw); } catch (e) {}
@@ -547,10 +547,13 @@ function doDoneMany(list) {
   const logLen = DB.log.length, items = list.map(([pid, k]) => applyDone(pid, k));
   lastUndo = { items, logLen }; save(); render(); toast(`${items.length} ${items.length === 1 ? 'task' : 'tasks'} done`, true);
 }
+// the office is closed Fri and Sat (Israel work week): office reminders roll forward to the next Sun-Thu
+const rollOffice = d => { while ([5, 6].includes(parse(d).getDay())) d = addDays(d, 1); return d; };
+const nextOfficeDay = () => rollOffice(addDays(today(), 1));
 function doSnooze(n) {
   const { pid, k, reason } = sheetCtx, p = plant(pid), t = p.tasks[k], i = info(p, k);
   lastUndo = { items: [{ pid, k, prev: { ...t } }], logLen: DB.log.length };
-  t.snoozeUntil = addDays(today(), n); t.snoozes = (t.snoozes || 0) + 1;
+  t.snoozeUntil = placeOf(p) === 'office' ? rollOffice(addDays(today(), n)) : addDays(today(), n); n = diff(today(), t.snoozeUntil); t.snoozes = (t.snoozes || 0) + 1;
   addLog({ type: 'snooze', pid, plant: p.name, species: p.species, task: k, date: today(), planned: i.base, days: n, until: t.snoozeUntil,
     lateSoFar: diff(i.base, t.snoozeUntil), snoozeNo: t.snoozes, interval: i.interval, reason: reason || null });
   save(); closeSheet(); render(); toast(`Snoozed until ${shortDate(t.snoozeUntil)}`, true);
@@ -736,6 +739,7 @@ document.addEventListener('click', async e => {
     const p = plant(d.p); sheetCtx = { pid: d.p, k: d.k, reason: null };
     const mn = [2, 4, 7][Math.min(p.tasks[d.k].snoozes || 0, 2)]; // each repeat waits longer, so fewer taps
     openSheet(`<h3>Snooze ${TASKS[d.k].l.toLowerCase()}?</h3><div class="sub"><bdi>${esc(p.name)}</bdi> · Why? (optional) Then choose for how long.</div>
+      ${placeOf(p) === 'office' ? (() => { const od = nextOfficeDay(), n = diff(today(), od); return `<button class="primary" style="margin:12px 0 4px" data-act="officesnooze" data-n="${n}">${svg('clock')} Not in the office · until ${n === 1 ? 'tomorrow' : parse(od).toLocaleDateString('en-GB', { weekday: 'long' })}</button>`; })() : ''}
       <button class="primary" style="margin:12px 0 4px" data-act="moist2" data-n="${mn}">${svg('water')} Soil still moist · check in ${mn} days</button>
       <div class="chips">${REASONS.map(r => `<button class="chip" data-act="reason" data-v="${r}">${r}</button>`).join('')}</div>
       <div class="btnrow"><button class="secondary" data-act="snoozego" data-n="1">1 day</button><button class="secondary" data-act="snoozego" data-n="2">2 days</button></div>
@@ -847,6 +851,7 @@ document.addEventListener('click', async e => {
     const e = DB.log[+d.i], p = e && e.type === 'done' && plant(e.pid), t = p && p.tasks[e.task];
     if (t && e.prevLast) { t.last = e.prevLast; t.snoozeUntil = e.prevSnoozeUntil || null; t.snoozes = e.prevSnoozes || 0; DB.log.splice(+d.i, 1); lastUndo = null; save(); render(); toast(`${p.name}: back to due`, false); }
   }
+  else if (a === 'officesnooze') { sheetCtx.reason = 'Not in the office'; doSnooze(+d.n || 1); }
   else if (a === 'moist2') { sheetCtx.reason = MOIST; doSnooze(+d.n || 2); }
   else if (a === 'exportall') { if (await shareJSON(`plants-backup-${today()}.json`, DB)) { DB.meta.lastBackup = today(); save(); render(); } }
   else if (a === 'nudgelater') { DB.meta.nudgeUntil = addDays(today(), 7); save(); render(); }
